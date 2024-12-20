@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:5.7
+    container_name: rfsim5g-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "linux"
+      MYSQL_DATABASE: "oai_db"
+      MYSQL_USER: "oai"
+      MYSQL_PASSWORD: "oai"
+    ports:
+      - "3306:3306"
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.131
+    healthcheck:
+      test: mysqladmin ping -h localhost
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  oai-nrf:
+    image: oai-nrf:latest
+    container_name: rfsim5g-oai-nrf
+    environment:
+      NRF_INTERFACE_NAME_FOR_NF_DISCOVERY: "eth0"
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.130
+    depends_on:
+      - mysql
+    healthcheck:
+      test: curl -f http://localhost:8080/nnrf-nfm/v1/nf-instances
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  oai-amf:
+    image: oai-amf:latest
+    container_name: rfsim5g-oai-amf
+    environment:
+      AMF_INTERFACE_NAME_FOR_SBI: "eth0"
+      NRF_API_VERSION: "v1"
+      REGISTER_NRF: "yes"
+    depends_on:
+      - oai-nrf
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.132
+    healthcheck:
+      test: curl -f http://localhost:8080/namf-comm/v1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  oai-smf:
+    image: oai-smf:latest
+    container_name: rfsim5g-oai-smf
+    environment:
+      SMF_INTERFACE_NAME_FOR_SBI: "eth0"
+      REGISTER_NRF: "yes"
+    depends_on:
+      - oai-amf
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.133
+    healthcheck:
+      test: curl -f http://localhost:8080/nsmf-pdusession/v1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  oai-spgwu:
+    image: oai-spgwu-tiny:latest
+    container_name: rfsim5g-oai-spgwu
+    privileged: true
+    depends_on:
+      - oai-smf
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.134
+
+  oai-gnb:
+    image: oai-gnb:develop
+    container_name: rfsim5g-oai-gnb
+    privileged: true
+    environment:
+      AMF_IP_ADDRESS: "192.168.71.132"
+      GNB_INTERFACE_NAME_FOR_NG_AMF: "eth0"
+    depends_on:
+      - oai-amf
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.136
+
+  oai-nr-ue:
+    image: oai-nr-ue:develop
+    container_name: rfsim5g-oai-nr-ue
+    privileged: true
+    environment:
+      RFSIMULATOR: "192.168.71.136"
+      FULL_IMSI: '208990100001100'
+      FULL_KEY: 'fec86ba6eb707ed08905757b1bb44b8f'
+      OPC: 'C42449363BBAD02B66D16BC975D77CC1'
+      DNN: oai
+      NSSAI_SST: 1
+      NSSAI_SD: 1
+      USE_ADDITIONAL_OPTIONS: -E --sa --rfsim -r 106 --numerology 1 -C 3619200000 --nokrnmod
+    depends_on:
+      - oai-gnb
+    networks:
+      public_net:
+        ipv4_address: 192.168.71.129
+    volumes:
+      - ./nr-ue.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+    healthcheck:
+      test: /bin/bash -c "pgrep nr-uesoftmodem"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  public_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.71.128/26
